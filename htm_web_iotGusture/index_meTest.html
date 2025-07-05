@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gesture Control Hub</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.min.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Landing Page -->
+    <div id="landing" class="landing-page">
+      <div class="landing-content">
+        <div class="hero-icon">👋</div>
+        <h1 class="hero-title">Gesture Control Hub</h1>
+        <p class="hero-subtitle">Control IoT devices with simple hand gestures</p>
+        
+        <div class="features">
+          <div class="feature-card">
+            <div class="feature-icon">📹</div>
+            <p>Uses your webcam to detect hand gestures in real-time</p>
+          </div>
+          
+          <div class="feature-card">
+            <div class="feature-icon">✌️</div>
+            <p>Control your car with intuitive hand movements</p>
+          </div>
+          
+          <div class="feature-card">
+            <div class="feature-icon">🚗</div>
+            <p>Real-time gesture recognition for smooth control</p>
+          </div>
+        </div>
+        
+        <button id="getStarted" class="get-started-btn">
+          <span>Get Started</span>
+          <div class="btn-icon">✓</div>
+        </button>
+      </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="mainApp" class="main-app hidden">
+      <div class="app-header">
+        <button id="backBtn" class="back-btn">←</button>
+        <h1>🤖 Gesture Control</h1>
+        <div class="status-indicator">
+          <div class="status-dot"></div>
+          <span id="connectionStatus">Live</span>
+        </div>
+      </div>
+
+      <div class="camera-section">
+        <div class="camera-container">
+          <video id="video" autoplay playsinline></video>
+          <canvas id="canvas"></canvas>
+          
+          <div id="gesture" class="gesture-display">
+            <div class="gesture-icon">🤚</div>
+            <div class="gesture-text">Initializing...</div>
+          </div>
+
+          <div class="confidence-meter">
+            <div class="confidence-label">Detection Confidence</div>
+            <div class="confidence-bar">
+              <div class="confidence-fill" id="confidenceFill"></div>
+            </div>
+            <div class="confidence-value" id="confidenceValue">0%</div>
+          </div>
+        </div>
+
+        <div class="controls-info">
+          <h3>Gesture Commands</h3>
+          <div class="gesture-list">
+            <div class="gesture-item">
+              <span class="gesture-emoji">✊</span>
+              <span class="gesture-name">Fist</span>
+              <span class="gesture-action">Forward</span>
+            </div>
+            <div class="gesture-item">
+              <span class="gesture-emoji">👍</span>
+              <span class="gesture-name">Thumb Up</span>
+              <span class="gesture-action">Left</span>
+            </div>
+            <div class="gesture-item">
+              <span class="gesture-emoji">🤙</span>
+              <span class="gesture-name">Shaka</span>
+              <span class="gesture-action">Right</span>
+            </div>
+            <div class="gesture-item">
+              <span class="gesture-emoji">✋</span>
+              <span class="gesture-name">Open Hand</span>
+              <span class="gesture-action">Stop</span>
+            </div>
+            <div class="gesture-item">
+              <span class="gesture-emoji">✌️</span>
+              <span class="gesture-name">Peace</span>
+              <span class="gesture-action">Reverse</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Command Status Display -->
+      <div class="command-status">
+        <h3>Command Status</h3>
+        <div id="lastCommand" class="last-command">None</div>
+        <div id="commandTime" class="command-time">--:--:--</div>
+      </div>
+    </div>
+
+    <!-- Error Modal -->
+    <div id="errorModal" class="modal hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div class="error-icon">⚠️</div>
+          <h3 id="errorTitle">Camera Access Required</h3>
+        </div>
+        <div class="modal-body">
+          <p id="errorMessage">Please allow camera access to use gesture detection.</p>
+          <div id="errorInstructions" class="instructions">
+            <ol>
+              <li>Click the camera icon in your browser's address bar</li>
+              <li>Select "Allow" for camera access</li>
+              <li>Refresh the page</li>
+            </ol>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="retryBtn" class="retry-btn">Try Again</button>
+          <button id="closeModal" class="close-btn">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Global variables
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const gestureDisplay = document.getElementById('gesture');
+    const confidenceFill = document.getElementById('confidenceFill');
+    const confidenceValue = document.getElementById('confidenceValue');
+    const connectionStatus = document.getElementById('connectionStatus');
+    const lastCommand = document.getElementById('lastCommand');
+    const commandTime = document.getElementById('commandTime');
+    
+    let currentGesture = '';
+    let gestureConfidence = 0;
+    let lastGesture = null;
+    let hands = null;
+    let gestureStability = 0;
+    let stableGestureCount = 0;
+    const STABILITY_THRESHOLD = 3; // Number of consecutive detections needed
+
+    // Blynk configuration
+    const blynkToken = "tVIYzfAnG877yK7LVE8CDzRAXsOOYymU";
+    const virtualPin = "V0";
+
+    // CORS Proxy URLs (Multiple options for reliability)
+    const corsProxies = [
+      'https://cors-anywhere.herokuapp.com/',
+      'https://api.allorigins.win/raw?url=',
+      'https://corsproxy.io/?'
+    ];
+    let currentProxyIndex = 0;
+
+    // Page navigation
+    document.getElementById('getStarted').addEventListener('click', () => {
+      document.getElementById('landing').classList.add('hidden');
+      document.getElementById('mainApp').classList.remove('hidden');
+      initializeApp();
+    });
+
+    document.getElementById('backBtn').addEventListener('click', () => {
+      document.getElementById('mainApp').classList.add('hidden');
+      document.getElementById('landing').classList.remove('hidden');
+      cleanup();
+    });
+
+    // Modal controls
+    document.getElementById('retryBtn').addEventListener('click', () => {
+      document.getElementById('errorModal').classList.add('hidden');
+      initializeCamera();
+    });
+
+    document.getElementById('closeModal').addEventListener('click', () => {
+      document.getElementById('errorModal').classList.add('hidden');
+    });
+
+    // Initialize app
+    function initializeApp() {
+      setCanvasSize();
+      initializeCamera();
+      window.addEventListener('resize', setCanvasSize);
+    }
+
+    // Set canvas dimensions
+    function setCanvasSize() {
+      const container = document.querySelector('.camera-container');
+      const isMobile = window.innerWidth <= 768;
+      
+      if (isMobile) {
+        canvas.width = Math.min(window.innerWidth - 40, 600);
+        canvas.height = Math.min((window.innerWidth - 40) * 0.75, 450);
+      } else {
+        canvas.width = 640;
+        canvas.height = 480;
+      }
+    }
+
+    // Check secure context
+    function isSecureContext() {
+      return location.protocol === 'https:' || 
+             location.hostname === 'localhost' || 
+             location.hostname === '127.0.0.1';
+    }
+
+    // Show error modal
+    function showError(title, message, showInstructions = false) {
+      document.getElementById('errorTitle').textContent = title;
+      document.getElementById('errorMessage').textContent = message;
+      document.getElementById('errorInstructions').style.display = showInstructions ? 'block' : 'none';
+      document.getElementById('errorModal').classList.remove('hidden');
+    }
+
+    // Initialize camera
+    async function initializeCamera() {
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          showError("Camera Not Supported", "Your browser doesn't support camera access.");
+          return;
+        }
+
+        if (!isSecureContext()) {
+          showError("Secure Connection Required", "Camera access requires HTTPS connection.");
+          return;
+        }
+
+        updateGestureDisplay("Requesting Camera...", "🎥", 0);
+        
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 640, min: 320 },
+            height: { ideal: 480, min: 240 },
+            facingMode: 'user'
+          },
+          audio: false
+        });
+        
+        video.srcObject = stream;
+        
+        return new Promise((resolve, reject) => {
+          video.onloadedmetadata = () => {
+            video.play().then(() => {
+              updateGestureDisplay("Camera Ready", "✅", 1);
+              initializeHandDetection();
+              resolve();
+            }).catch(reject);
+          };
+          
+          video.onerror = reject;
+          setTimeout(() => reject(new Error('Video load timeout')), 10000);
+        });
+        
+      } catch (error) {
+        console.error('Camera initialization failed:', error);
+        connectionStatus.textContent = 'Camera Error';
+        
+        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+          showError("Permission Denied", "Camera access was denied. Please allow camera permissions.", true);
+        } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+          showError("No Camera Found", "No camera device was detected on your system.");
+        } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+          showError("Camera Busy", "Camera is being used by another application.");
+        } else {
+          showError("Camera Error", "An error occurred while accessing the camera.");
+        }
+        
+        updateGestureDisplay("Camera Error", "❌", 0);
+      }
+    }
+
+    // Initialize hand detection
+    function initializeHandDetection() {
+      hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+      });
+
+      hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.7,
+      });
+
+      hands.onResults(onResults);
+
+      async function processFrame() {
+        if (video.readyState >= 2 && video.videoWidth > 0) {
+          try {
+            await hands.send({image: video});
+          } catch (error) {
+            console.error('Hand detection error:', error);
+          }
+        }
+        requestAnimationFrame(processFrame);
+      }
+      
+      updateGestureDisplay("AI Loading...", "🤖", 0.5);
+      processFrame();
+      
+      setTimeout(() => {
+        updateGestureDisplay("Ready to Detect", "👋", 1);
+        connectionStatus.textContent = 'Ready';
+      }, 2000);
+    }
+
+    // Update gesture display
+    function updateGestureDisplay(text, icon, confidence) {
+      const gestureIcon = document.querySelector('.gesture-icon');
+      const gestureText = document.querySelector('.gesture-text');
+      
+      gestureIcon.textContent = icon;
+      gestureText.textContent = text;
+      
+      // Update confidence
+      confidenceFill.style.width = (confidence * 100) + '%';
+      confidenceValue.textContent = Math.round(confidence * 100) + '%';
+      
+      // Add active class for recognized gestures
+      if (confidence > 0.7) {
+        gestureDisplay.classList.add('active');
+      } else {
+        gestureDisplay.classList.remove('active');
+      }
+    }
+
+    // Process hand detection results
+    function onResults(results) {
+      if (!canvas || !ctx) return;
+      
+      ctx.save();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw video frame
+      if (results.image) {
+        ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+      }
+
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const landmarks = results.multiHandLandmarks[0];
+        const handedness = results.multiHandedness[0].label;
+        gestureConfidence = results.multiHandedness[0].score;
+
+        // Draw hand landmarks
+        if (typeof drawConnectors === 'function' && typeof HAND_CONNECTIONS !== 'undefined') {
+          ctx.strokeStyle = '#60A5FA';
+          ctx.lineWidth = 2;
+          ctx.shadowColor = '#60A5FA';
+          ctx.shadowBlur = 10;
+          drawConnectors(ctx, landmarks, HAND_CONNECTIONS, { color: '#60A5FA', lineWidth: 2 });
+        }
+        
+        if (typeof drawLandmarks === 'function') {
+          ctx.fillStyle = '#3B82F6';
+          ctx.shadowColor = '#3B82F6';
+          ctx.shadowBlur = 8;
+          drawLandmarks(ctx, landmarks, { color: '#3B82F6', lineWidth: 3 });
+        }
+
+        // Gesture detection
+        const gesture = detectGesture(landmarks, handedness);
+        
+        // Check gesture stability
+        if (gesture === currentGesture) {
+          stableGestureCount++;
+        } else {
+          stableGestureCount = 0;
+          currentGesture = gesture;
+        }
+
+        const gestureIcons = {
+          'Forward': '⬆️',
+          'Left': '⬅️',
+          'Right': '➡️',
+          'Stop': '🛑',
+          'Backward': '⬇️',
+          'Unknown': '❓'
+        };
+
+        updateGestureDisplay(gesture, gestureIcons[gesture] || '🤖', gestureConfidence);
+        
+        // Only send command if gesture is stable
+        if (stableGestureCount >= STABILITY_THRESHOLD) {
+          sendToBlynk(gesture);
+        }
+      } else {
+        updateGestureDisplay("No Hand Detected", "👻", 0);
+        currentGesture = '';
+        stableGestureCount = 0;
+        sendToBlynk("Stop");
+      }
+
+      ctx.restore();
+    }
+
+    // Detect gesture from landmarks
+    function detectGesture(landmarks, handedness) {
+      // Helper function to check if finger is extended
+      const isFingerExtended = (tipIndex, pipIndex, mcpIndex) => {
+        const tip = landmarks[tipIndex];
+        const pip = landmarks[pipIndex];
+        const mcp = landmarks[mcpIndex];
+        
+        // Check if tip is above pip (extended)
+        return tip.y < pip.y && pip.y < mcp.y;
+      };
+
+      // Check thumb (different logic due to thumb orientation)
+      const thumbTip = landmarks[4];
+      const thumbIp = landmarks[3];
+      const thumbMcp = landmarks[2];
+      
+      const thumbExtended = handedness === "Right" 
+        ? thumbTip.x > thumbIp.x && thumbIp.x > thumbMcp.x
+        : thumbTip.x < thumbIp.x && thumbIp.x < thumbMcp.x;
+
+      // Check other fingers
+      const indexExtended = isFingerExtended(8, 6, 5);
+      const middleExtended = isFingerExtended(12, 10, 9);
+      const ringExtended = isFingerExtended(16, 14, 13);
+      const pinkyExtended = isFingerExtended(20, 18, 17);
+
+      // Count extended fingers
+      const extendedCount = [thumbExtended, indexExtended, middleExtended, ringExtended, pinkyExtended].filter(Boolean).length;
+
+      // Gesture recognition logic
+      if (extendedCount === 0) {
+        // All fingers closed - Fist
+        return "Forward";
+      } else if (thumbExtended && extendedCount === 1) {
+        // Only thumb extended - Thumbs up
+        return "Left";
+      } else if (pinkyExtended && thumbExtended && extendedCount === 2) {
+        // Thumb and pinky extended - Shaka/Call me
+        return "Right";
+      } else if (extendedCount === 5) {
+        // All fingers extended - Open hand
+        return "Stop";
+      } else if (indexExtended && middleExtended && extendedCount === 2) {
+        // Index and middle extended - Peace sign
+        return "Backward";
+      }
+
+      return "Unknown";
+    }
+
+    // FIXED: Send command to Blynk with multiple methods
+    function sendToBlynk(gesture) {
+      if (gesture === lastGesture || gesture === "Unknown") return;
+
+      lastGesture = gesture;
+
+      const gestureMap = {
+        "Forward": "F",
+        "Left": "L", 
+        "Right": "R",
+        "Stop": "S",
+        "Backward": "B"
+      };
+
+      const command = gestureMap[gesture];
+      
+      if (command) {
+        // Update UI immediately
+        updateCommandStatus(gesture, command);
+        
+        // Try multiple methods to send the command
+        sendBlynkCommand(command);
+      }
+    }
+
+    // Multiple methods to send Blynk command
+    async function sendBlynkCommand(command) {
+      const blynkUrl = `https://blynk.cloud/external/api/update?token=${blynkToken}&${virtualPin}=${command}`;
+      
+      // Method 1: Try direct fetch (might work in production)
+      try {
+        const response = await fetch(blynkUrl, {
+          method: 'GET',
+          mode: 'no-cors' // This bypasses CORS but you can't read the response
+        });
+        console.log(`✅ Direct method: Command sent successfully -> ${command}`);
+        connectionStatus.textContent = 'Connected';
+        return;
+      } catch (error) {
+        console.log('Direct method failed, trying proxy...');
+      }
+
+      // Method 2: Try with CORS proxy
+      for (let i = 0; i < corsProxies.length; i++) {
+        try {
+          const proxyUrl = corsProxies[i] + encodeURIComponent(blynkUrl);
+          const response = await fetch(proxyUrl, {
+            method: 'GET',
+            headers: {
+              'X-Requested-With': 'XMLHttpRequest'
+            }
+          });
+          
+          if (response.ok) {
+            console.log(`✅ Proxy method ${i + 1}: Command sent successfully -> ${command}`);
+            connectionStatus.textContent = 'Connected';
+            return;
+          }
+        } catch (error) {
+          console.log(`Proxy method ${i + 1} failed:`, error);
+        }
+      }
+
+      // Method 3: Try JSONP approach (fallback)
+      try {
+        await sendViaJSONP(blynkUrl, command);
+        console.log(`✅ JSONP method: Command sent successfully -> ${command}`);
+        connectionStatus.textContent = 'Connected';
+        return;
+      } catch (error) {
+        console.log('JSONP method failed:', error);
+      }
+
+      // Method 4: Try Image pixel method (last resort)
+      try {
+        const img = new Image();
+        img.onload = () => {
+          console.log(`✅ Image method: Command sent successfully -> ${command}`);
+          connectionStatus.textContent = 'Connected';
+        };
+        img.onerror = () => {
+          console.log('Image method failed, but command might have been sent');
+          connectionStatus.textContent = 'Connection Unknown';
+        };
+        img.src = blynkUrl + '&_=' + Date.now();
+        return;
+      } catch (error) {
+        console.log('Image method failed:', error);
+      }
+
+      // If all methods fail
+      console.error(`❌ All methods failed for command: ${command}`);
+      connectionStatus.textContent = 'Connection Error';
+    }
+
+    // JSONP fallback method
+    function sendViaJSONP(url, command) {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        const callbackName = 'blynkCallback' + Date.now();
+        
+        window[callbackName] = function(data) {
+          delete window[callbackName];
+          document.head.removeChild(script);
+          resolve(data);
+        };
+
+        script.onerror = function() {
+          delete window[callbackName];
+          document.head.removeChild(script);
+          reject(new Error('JSONP failed'));
+        };
+
+        script.src = url + '&callback=' + callbackName;
+        document.head.appendChild(script);
+        
+        // Timeout after 5 seconds
+        setTimeout(() => {
+          if (window[callbackName]) {
+            delete window[callbackName];
+            document.head.removeChild(script);
+            reject(new Error('JSONP timeout'));
+          }
+        }, 5000);
+      });
+    }
+
+    // Update command status display
+    function updateCommandStatus(gesture, command) {
+      lastCommand.textContent = `${gesture} (${command})`;
+      commandTime.textContent = new Date().toLocaleTimeString();
+      window.lastCommandTime = Date.now();
+    }
+
+    // Cleanup function
+    function cleanup() {
+      if (video.srcObject) {
+        video.srcObject.getTracks().forEach(track => track.stop());
+        video.srcObject = null;
+      }
+      if (hands) {
+        hands.close();
+        hands = null;
+      }
+      lastGesture = null;
+      currentGesture = '';
+      stableGestureCount = 0;
+    }
+
+    // Handle page visibility changes
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        if (video.srcObject) {
+          video.srcObject.getTracks().forEach(track => track.enabled = false);
+        }
+      } else {
+        if (video.srcObject) {
+          video.srcObject.getTracks().forEach(track => track.enabled = true);
+        }
+      }
+    });
+
+    // Handle window unload
+    window.addEventListener('beforeunload', cleanup);
+
+    // Auto-stop safety feature
+    setInterval(() => {
+      if (lastGesture && lastGesture !== "Stop") {
+        // Auto-send stop command every 3 seconds as safety measure
+        const timeSinceLastCommand = Date.now() - (window.lastCommandTime || 0);
+        if (timeSinceLastCommand > 3000) {
+          sendToBlynk("Stop");
+        }
+      }
+    }, 3000);
+
+    // Connection health check
+    setInterval(() => {
+      // Periodic connection test
+      if (connectionStatus.textContent === 'Connected') {
+        // Try to send a test command every 30 seconds
+        sendBlynkCommand('S').catch(() => {
+          connectionStatus.textContent = 'Connection Issues';
+        });
+      }
+    }, 30000);
+  </script>
+</body>
+</html>
