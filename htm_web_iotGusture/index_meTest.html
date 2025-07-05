@@ -110,16 +110,6 @@
         <div id="lastCommand" class="last-command">None</div>
         <div id="commandTime" class="command-time">--:--:--</div>
       </div>
-
-      <!-- Debug Panel -->
-      <div class="debug-panel">
-        <h4>Debug Info</h4>
-        <div id="debugInfo">
-          <div>Fingers: <span id="fingerCount">0</span></div>
-          <div>Gesture Buffer: <span id="gestureBuffer">Empty</span></div>
-          <div>Stability: <span id="stabilityCount">0</span></div>
-        </div>
-      </div>
     </div>
 
     <!-- Error Modal -->
@@ -159,32 +149,25 @@
     const lastCommand = document.getElementById('lastCommand');
     const commandTime = document.getElementById('commandTime');
     
-    // Enhanced gesture detection variables
     let currentGesture = '';
     let gestureConfidence = 0;
-    let lastSentCommand = null;
+    let lastGesture = null;
     let hands = null;
-    let gestureBuffer = [];
+    let gestureStability = 0;
     let stableGestureCount = 0;
-    const STABILITY_THRESHOLD = 8; // Increased for better stability
-    const BUFFER_SIZE = 10;
-    const MIN_CONFIDENCE = 0.8;
-    
-    // Timing variables
-    let lastCommandTime = 0;
-    let commandCooldown = 500; // 500ms cooldown between commands
-    let autoStopDisabled = false; // Flag to disable auto-stop
+    const STABILITY_THRESHOLD = 3; // Number of consecutive detections needed
 
     // Blynk configuration
     const blynkToken = "tVIYzfAnG877yK7LVE8CDzRAXsOOYymU";
     const virtualPin = "V0";
 
-    // CORS Proxy URLs
+    // CORS Proxy URLs (Multiple options for reliability)
     const corsProxies = [
       'https://cors-anywhere.herokuapp.com/',
       'https://api.allorigins.win/raw?url=',
       'https://corsproxy.io/?'
     ];
+    let currentProxyIndex = 0;
 
     // Page navigation
     document.getElementById('getStarted').addEventListener('click', () => {
@@ -311,8 +294,8 @@
       hands.setOptions({
         maxNumHands: 1,
         modelComplexity: 1,
-        minDetectionConfidence: 0.8,
-        minTrackingConfidence: 0.8,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.7,
       });
 
       hands.onResults(onResults);
@@ -357,163 +340,6 @@
       }
     }
 
-    // Enhanced gesture detection with improved accuracy
-    function detectGesture(landmarks, handedness) {
-      // Calculate distances for better accuracy
-      const calculateDistance = (point1, point2) => {
-        return Math.sqrt(Math.pow(point1.x - point2.x, 2) + Math.pow(point1.y - point2.y, 2));
-      };
-
-      // Get key landmarks
-      const thumb_tip = landmarks[4];
-      const thumb_ip = landmarks[3];
-      const thumb_mcp = landmarks[2];
-      const index_tip = landmarks[8];
-      const index_pip = landmarks[6];
-      const index_mcp = landmarks[5];
-      const middle_tip = landmarks[12];
-      const middle_pip = landmarks[10];
-      const middle_mcp = landmarks[9];
-      const ring_tip = landmarks[16];
-      const ring_pip = landmarks[14];
-      const ring_mcp = landmarks[13];
-      const pinky_tip = landmarks[20];
-      const pinky_pip = landmarks[18];
-      const pinky_mcp = landmarks[17];
-      const wrist = landmarks[0];
-
-      // Enhanced finger extension detection
-      const isFingerExtended = (tip, pip, mcp) => {
-        const tip_pip_dist = calculateDistance(tip, pip);
-        const pip_mcp_dist = calculateDistance(pip, mcp);
-        const tip_mcp_dist = calculateDistance(tip, mcp);
-        
-        // Check if finger is straight and extended
-        const ratio = tip_mcp_dist / (tip_pip_dist + pip_mcp_dist);
-        const angle_threshold = tip.y < pip.y && pip.y < mcp.y;
-        
-        return ratio > 0.8 && angle_threshold;
-      };
-
-      // Enhanced thumb detection
-      const isThumbExtended = () => {
-        const thumb_extended = handedness === "Right" 
-          ? thumb_tip.x > thumb_ip.x && thumb_ip.x > thumb_mcp.x
-          : thumb_tip.x < thumb_ip.x && thumb_ip.x < thumb_mcp.x;
-        
-        // Additional check for thumb angle
-        const thumb_angle = calculateDistance(thumb_tip, thumb_mcp);
-        const thumb_palm_dist = calculateDistance(thumb_tip, landmarks[17]); // Distance to pinky MCP
-        
-        return thumb_extended && thumb_angle > 0.08 && thumb_palm_dist > 0.12;
-      };
-
-      // Check each finger
-      const fingers = {
-        thumb: isThumbExtended(),
-        index: isFingerExtended(index_tip, index_pip, index_mcp),
-        middle: isFingerExtended(middle_tip, middle_pip, middle_mcp),
-        ring: isFingerExtended(ring_tip, ring_pip, ring_mcp),
-        pinky: isFingerExtended(pinky_tip, pinky_pip, pinky_mcp)
-      };
-
-      const extendedFingers = Object.values(fingers).filter(Boolean).length;
-      
-      // Update debug info
-      updateDebugInfo(extendedFingers, fingers);
-
-      // Enhanced gesture classification with stricter criteria
-      if (extendedFingers === 0) {
-        // All fingers closed - check if it's a proper fist
-        const fist_compactness = calculateFistCompactness(landmarks);
-        if (fist_compactness > 0.6) {
-          return "Forward";
-        }
-        return "Unknown";
-      }
-      
-      if (fingers.thumb && extendedFingers === 1) {
-        // Only thumb extended - check thumb angle
-        const thumb_angle = Math.abs(thumb_tip.y - thumb_mcp.y);
-        if (thumb_angle < 0.15) { // Thumb pointing up/down
-          return "Left";
-        }
-        return "Unknown";
-      }
-      
-      if (fingers.thumb && fingers.pinky && extendedFingers === 2) {
-        // Shaka gesture - check if other fingers are properly closed
-        const middle_fingers_closed = !fingers.index && !fingers.middle && !fingers.ring;
-        if (middle_fingers_closed) {
-          return "Right";
-        }
-        return "Unknown";
-      }
-      
-      if (extendedFingers === 5) {
-        // All fingers extended - check if hand is flat
-        const hand_flatness = calculateHandFlatness(landmarks);
-        if (hand_flatness > 0.7) {
-          return "Stop";
-        }
-        return "Unknown";
-      }
-      
-      if (fingers.index && fingers.middle && extendedFingers === 2) {
-        // Peace sign - check if fingers are properly separated
-        const finger_separation = calculateDistance(index_tip, middle_tip);
-        const other_fingers_closed = !fingers.thumb && !fingers.ring && !fingers.pinky;
-        if (finger_separation > 0.05 && other_fingers_closed) {
-          return "Backward";
-        }
-        return "Unknown";
-      }
-
-      return "Unknown";
-    }
-
-    // Calculate fist compactness
-    function calculateFistCompactness(landmarks) {
-      const fingertips = [4, 8, 12, 16, 20]; // Thumb, index, middle, ring, pinky tips
-      const palm_center = landmarks[0]; // Wrist as reference
-      
-      let total_distance = 0;
-      fingertips.forEach(tip_index => {
-        total_distance += Math.sqrt(
-          Math.pow(landmarks[tip_index].x - palm_center.x, 2) +
-          Math.pow(landmarks[tip_index].y - palm_center.y, 2)
-        );
-      });
-      
-      const avg_distance = total_distance / fingertips.length;
-      return Math.max(0, 1 - (avg_distance / 0.3)); // Normalize to 0-1
-    }
-
-    // Calculate hand flatness
-    function calculateHandFlatness(landmarks) {
-      const fingertips = [4, 8, 12, 16, 20];
-      const mcp_joints = [2, 5, 9, 13, 17];
-      
-      let tip_y_sum = 0;
-      let mcp_y_sum = 0;
-      
-      fingertips.forEach(tip => tip_y_sum += landmarks[tip].y);
-      mcp_joints.forEach(mcp => mcp_y_sum += landmarks[mcp].y);
-      
-      const avg_tip_y = tip_y_sum / fingertips.length;
-      const avg_mcp_y = mcp_y_sum / mcp_joints.length;
-      
-      const flatness = Math.max(0, 1 - Math.abs(avg_tip_y - avg_mcp_y) / 0.2);
-      return flatness;
-    }
-
-    // Update debug information
-    function updateDebugInfo(fingerCount, fingers) {
-      document.getElementById('fingerCount').textContent = fingerCount;
-      document.getElementById('gestureBuffer').textContent = gestureBuffer.slice(-3).join(', ') || 'Empty';
-      document.getElementById('stabilityCount').textContent = stableGestureCount;
-    }
-
     // Process hand detection results
     function onResults(results) {
       if (!canvas || !ctx) return;
@@ -531,108 +357,114 @@
         const handedness = results.multiHandedness[0].label;
         gestureConfidence = results.multiHandedness[0].score;
 
-        // Draw hand landmarks with better visibility
+        // Draw hand landmarks
         if (typeof drawConnectors === 'function' && typeof HAND_CONNECTIONS !== 'undefined') {
-          ctx.strokeStyle = '#00FF00';
-          ctx.lineWidth = 3;
-          ctx.shadowColor = '#00FF00';
-          ctx.shadowBlur = 5;
-          drawConnectors(ctx, landmarks, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 3 });
+          ctx.strokeStyle = '#60A5FA';
+          ctx.lineWidth = 2;
+          ctx.shadowColor = '#60A5FA';
+          ctx.shadowBlur = 10;
+          drawConnectors(ctx, landmarks, HAND_CONNECTIONS, { color: '#60A5FA', lineWidth: 2 });
         }
         
         if (typeof drawLandmarks === 'function') {
-          ctx.fillStyle = '#FF0000';
-          ctx.strokeStyle = '#FFFFFF';
-          ctx.lineWidth = 2;
-          ctx.shadowColor = '#FF0000';
-          ctx.shadowBlur = 3;
-          drawLandmarks(ctx, landmarks, { color: '#FF0000', lineWidth: 2, radius: 4 });
+          ctx.fillStyle = '#3B82F6';
+          ctx.shadowColor = '#3B82F6';
+          ctx.shadowBlur = 8;
+          drawLandmarks(ctx, landmarks, { color: '#3B82F6', lineWidth: 3 });
         }
 
-        // Enhanced gesture detection
-        if (gestureConfidence > MIN_CONFIDENCE) {
-          const gesture = detectGesture(landmarks, handedness);
-          
-          // Add to gesture buffer
-          gestureBuffer.push(gesture);
-          if (gestureBuffer.length > BUFFER_SIZE) {
-            gestureBuffer.shift();
-          }
-          
-          // Check gesture stability using buffer
-          const recentGestures = gestureBuffer.slice(-5);
-          const dominantGesture = getMostFrequentGesture(recentGestures);
-          
-          if (dominantGesture === currentGesture && dominantGesture !== "Unknown") {
-            stableGestureCount++;
-          } else {
-            stableGestureCount = 0;
-            currentGesture = dominantGesture;
-          }
+        // Gesture detection
+        const gesture = detectGesture(landmarks, handedness);
+        
+        // Check gesture stability
+        if (gesture === currentGesture) {
+          stableGestureCount++;
+        } else {
+          stableGestureCount = 0;
+          currentGesture = gesture;
+        }
 
-          const gestureIcons = {
-            'Forward': '⬆️',
-            'Left': '⬅️',
-            'Right': '➡️',
-            'Stop': '🛑',
-            'Backward': '⬇️',
-            'Unknown': '❓'
-          };
+        const gestureIcons = {
+          'Forward': '⬆️',
+          'Left': '⬅️',
+          'Right': '➡️',
+          'Stop': '🛑',
+          'Backward': '⬇️',
+          'Unknown': '❓'
+        };
 
-          updateGestureDisplay(dominantGesture, gestureIcons[dominantGesture] || '🤖', gestureConfidence);
-          
-          // Send command only if gesture is stable and different from last sent
-          if (stableGestureCount >= STABILITY_THRESHOLD && 
-              dominantGesture !== "Unknown" && 
-              dominantGesture !== lastSentCommand &&
-              Date.now() - lastCommandTime > commandCooldown) {
-            sendToBlynk(dominantGesture);
-          }
+        updateGestureDisplay(gesture, gestureIcons[gesture] || '🤖', gestureConfidence);
+        
+        // Only send command if gesture is stable
+        if (stableGestureCount >= STABILITY_THRESHOLD) {
+          sendToBlynk(gesture);
         }
       } else {
-        // No hand detected
-        gestureBuffer.push("NoHand");
-        if (gestureBuffer.length > BUFFER_SIZE) {
-          gestureBuffer.shift();
-        }
-        
         updateGestureDisplay("No Hand Detected", "👻", 0);
         currentGesture = '';
         stableGestureCount = 0;
-        
-        // Only send stop if we previously sent a movement command
-        if (lastSentCommand && lastSentCommand !== "Stop" && 
-            Date.now() - lastCommandTime > 2000) { // Wait 2 seconds before auto-stop
-          sendToBlynk("Stop");
-        }
+        sendToBlynk("Stop");
       }
 
       ctx.restore();
     }
 
-    // Get most frequent gesture from buffer
-    function getMostFrequentGesture(gestures) {
-      const counts = {};
-      gestures.forEach(gesture => {
-        counts[gesture] = (counts[gesture] || 0) + 1;
-      });
+    // Detect gesture from landmarks
+    function detectGesture(landmarks, handedness) {
+      // Helper function to check if finger is extended
+      const isFingerExtended = (tipIndex, pipIndex, mcpIndex) => {
+        const tip = landmarks[tipIndex];
+        const pip = landmarks[pipIndex];
+        const mcp = landmarks[mcpIndex];
+        
+        // Check if tip is above pip (extended)
+        return tip.y < pip.y && pip.y < mcp.y;
+      };
+
+      // Check thumb (different logic due to thumb orientation)
+      const thumbTip = landmarks[4];
+      const thumbIp = landmarks[3];
+      const thumbMcp = landmarks[2];
       
-      let maxCount = 0;
-      let dominantGesture = "Unknown";
-      
-      for (const [gesture, count] of Object.entries(counts)) {
-        if (count > maxCount && gesture !== "Unknown" && gesture !== "NoHand") {
-          maxCount = count;
-          dominantGesture = gesture;
-        }
+      const thumbExtended = handedness === "Right" 
+        ? thumbTip.x > thumbIp.x && thumbIp.x > thumbMcp.x
+        : thumbTip.x < thumbIp.x && thumbIp.x < thumbMcp.x;
+
+      // Check other fingers
+      const indexExtended = isFingerExtended(8, 6, 5);
+      const middleExtended = isFingerExtended(12, 10, 9);
+      const ringExtended = isFingerExtended(16, 14, 13);
+      const pinkyExtended = isFingerExtended(20, 18, 17);
+
+      // Count extended fingers
+      const extendedCount = [thumbExtended, indexExtended, middleExtended, ringExtended, pinkyExtended].filter(Boolean).length;
+
+      // Gesture recognition logic
+      if (extendedCount === 0) {
+        // All fingers closed - Fist
+        return "Forward";
+      } else if (thumbExtended && extendedCount === 1) {
+        // Only thumb extended - Thumbs up
+        return "Left";
+      } else if (pinkyExtended && thumbExtended && extendedCount === 2) {
+        // Thumb and pinky extended - Shaka/Call me
+        return "Right";
+      } else if (extendedCount === 5) {
+        // All fingers extended - Open hand
+        return "Stop";
+      } else if (indexExtended && middleExtended && extendedCount === 2) {
+        // Index and middle extended - Peace sign
+        return "Backward";
       }
-      
-      return dominantGesture;
+
+      return "Unknown";
     }
 
-    // Send command to Blynk
+    // FIXED: Send command to Blynk with multiple methods
     function sendToBlynk(gesture) {
-      if (gesture === lastSentCommand) return;
+      if (gesture === lastGesture || gesture === "Unknown") return;
+
+      lastGesture = gesture;
 
       const gestureMap = {
         "Forward": "F",
@@ -645,54 +477,121 @@
       const command = gestureMap[gesture];
       
       if (command) {
-        lastSentCommand = gesture;
-        lastCommandTime = Date.now();
-        
         // Update UI immediately
         updateCommandStatus(gesture, command);
         
-        // Send command
+        // Try multiple methods to send the command
         sendBlynkCommand(command);
-        
-        console.log(`🎯 Sending command: ${gesture} (${command})`);
       }
     }
 
-    // Send Blynk command with multiple fallback methods
+    // Multiple methods to send Blynk command
     async function sendBlynkCommand(command) {
       const blynkUrl = `https://blynk.cloud/external/api/update?token=${blynkToken}&${virtualPin}=${command}`;
       
-      // Method 1: Direct fetch
+      // Method 1: Try direct fetch (might work in production)
       try {
         const response = await fetch(blynkUrl, {
           method: 'GET',
-          mode: 'no-cors'
+          mode: 'no-cors' // This bypasses CORS but you can't read the response
         });
-        console.log(`✅ Command sent: ${command}`);
+        console.log(`✅ Direct method: Command sent successfully -> ${command}`);
         connectionStatus.textContent = 'Connected';
         return;
       } catch (error) {
-        console.log('Direct method failed, trying alternatives...');
+        console.log('Direct method failed, trying proxy...');
       }
 
-      // Method 2: Image pixel method (most reliable for no-cors)
+      // Method 2: Try with CORS proxy
+      for (let i = 0; i < corsProxies.length; i++) {
+        try {
+          const proxyUrl = corsProxies[i] + encodeURIComponent(blynkUrl);
+          const response = await fetch(proxyUrl, {
+            method: 'GET',
+            headers: {
+              'X-Requested-With': 'XMLHttpRequest'
+            }
+          });
+          
+          if (response.ok) {
+            console.log(`✅ Proxy method ${i + 1}: Command sent successfully -> ${command}`);
+            connectionStatus.textContent = 'Connected';
+            return;
+          }
+        } catch (error) {
+          console.log(`Proxy method ${i + 1} failed:`, error);
+        }
+      }
+
+      // Method 3: Try JSONP approach (fallback)
+      try {
+        await sendViaJSONP(blynkUrl, command);
+        console.log(`✅ JSONP method: Command sent successfully -> ${command}`);
+        connectionStatus.textContent = 'Connected';
+        return;
+      } catch (error) {
+        console.log('JSONP method failed:', error);
+      }
+
+      // Method 4: Try Image pixel method (last resort)
       try {
         const img = new Image();
-        img.onload = img.onerror = () => {
-          console.log(`✅ Command sent via image method: ${command}`);
+        img.onload = () => {
+          console.log(`✅ Image method: Command sent successfully -> ${command}`);
           connectionStatus.textContent = 'Connected';
         };
+        img.onerror = () => {
+          console.log('Image method failed, but command might have been sent');
+          connectionStatus.textContent = 'Connection Unknown';
+        };
         img.src = blynkUrl + '&_=' + Date.now();
+        return;
       } catch (error) {
-        console.error('All methods failed:', error);
-        connectionStatus.textContent = 'Connection Error';
+        console.log('Image method failed:', error);
       }
+
+      // If all methods fail
+      console.error(`❌ All methods failed for command: ${command}`);
+      connectionStatus.textContent = 'Connection Error';
+    }
+
+    // JSONP fallback method
+    function sendViaJSONP(url, command) {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        const callbackName = 'blynkCallback' + Date.now();
+        
+        window[callbackName] = function(data) {
+          delete window[callbackName];
+          document.head.removeChild(script);
+          resolve(data);
+        };
+
+        script.onerror = function() {
+          delete window[callbackName];
+          document.head.removeChild(script);
+          reject(new Error('JSONP failed'));
+        };
+
+        script.src = url + '&callback=' + callbackName;
+        document.head.appendChild(script);
+        
+        // Timeout after 5 seconds
+        setTimeout(() => {
+          if (window[callbackName]) {
+            delete window[callbackName];
+            document.head.removeChild(script);
+            reject(new Error('JSONP timeout'));
+          }
+        }, 5000);
+      });
     }
 
     // Update command status display
     function updateCommandStatus(gesture, command) {
       lastCommand.textContent = `${gesture} (${command})`;
       commandTime.textContent = new Date().toLocaleTimeString();
+      window.lastCommandTime = Date.now();
     }
 
     // Cleanup function
@@ -705,10 +604,9 @@
         hands.close();
         hands = null;
       }
-      lastSentCommand = null;
+      lastGesture = null;
       currentGesture = '';
       stableGestureCount = 0;
-      gestureBuffer = [];
     }
 
     // Handle page visibility changes
@@ -727,11 +625,27 @@
     // Handle window unload
     window.addEventListener('beforeunload', cleanup);
 
-    // REMOVED: Auto-stop safety feature that was causing issues
-    // No more automatic stop commands every 3 seconds
-    
-    // Removed: Connection health check that was interfering
-    // The periodic connection test was causing unwanted stop commands
+    // Auto-stop safety feature
+    setInterval(() => {
+      if (lastGesture && lastGesture !== "Stop") {
+        // Auto-send stop command every 3 seconds as safety measure
+        const timeSinceLastCommand = Date.now() - (window.lastCommandTime || 0);
+        if (timeSinceLastCommand > 3000) {
+          sendToBlynk("Stop");
+        }
+      }
+    }, 3000);
+
+    // Connection health check
+    setInterval(() => {
+      // Periodic connection test
+      if (connectionStatus.textContent === 'Connected') {
+        // Try to send a test command every 30 seconds
+        sendBlynkCommand('S').catch(() => {
+          connectionStatus.textContent = 'Connection Issues';
+        });
+      }
+    }, 30000);
   </script>
 </body>
 </html>
